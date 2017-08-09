@@ -1,0 +1,108 @@
+Description: do not treat failure of readState() as fatal
+
+ This also prevents an empty state file from being written when running
+ with the --debug option.
+
+ Closes #45
+
+Author: Kamil Dudka <kdudka@redhat.com>
+Origin: upstream, https://github.com/logrotate/logrotate/commit/b9d82003002c98370e4131a7e43c76afcd23306a
+Bug: https://github.com/logrotate/logrotate/issues/45
+Bug-Ubuntu: https://bugs.launchpad.net/bugs/1709670
+Bug-Debian: https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=871592
+Index: logrotate-3.8.7/logrotate.c
+===================================================================
+--- logrotate-3.8.7.orig/logrotate.c
++++ logrotate-3.8.7/logrotate.c
+@@ -1999,27 +1999,43 @@ static int readState(char *stateFilename
+     struct logState *st;
+     time_t lr_time;
+     struct stat f_stat;
++    int rc = 0;
+ 
+     error = stat(stateFilename, &f_stat);
+ 
+-    if ((error && errno == ENOENT) || (!error && f_stat.st_size == 0)) {
+-	/* create the file before continuing to ensure we have write
+-	   access to the file */
+-	f = fopen(stateFilename, "w");
+-	if (!f) {
+-	    message(MESS_ERROR, "error creating state file %s: %s\n",
+-		    stateFilename, strerror(errno));
+-	    return 1;
+-	}
+-	fprintf(f, "logrotate state -- version 2\n");
+-	fclose(f);
+-	return 0;
+-    } else if (error) {
+-	message(MESS_ERROR, "error stat()ing state file %s: %s\n",
+-		stateFilename, strerror(errno));
+-	return 1;
++    if (error) {
++       /* treat non-statable file as an empty file */
++       f_stat.st_size = 0;
++       if (errno != ENOENT) {
++           message(MESS_ERROR, "error stat()ing state file %s: %s\n",
++                   stateFilename, strerror(errno));
++
++           /* do not return until the hash table is allocated */
++           rc = 1;
++       }
++    }
++
++    if (!debug && (f_stat.st_size == 0)) {
++       /* create the file before continuing to ensure we have write
++          access to the file */
++       f = fopen(stateFilename, "w");
++       if (f) {
++           fprintf(f, "logrotate state -- version 2\n");
++           fclose(f);
++       } else {
++           message(MESS_ERROR, "error creating state file %s: %s\n",
++                   stateFilename, strerror(errno));
++
++           /* do not return until the hash table is allocated */
++           rc = 1;
++       }
+     }
+ 
++
++    if (rc || (f_stat.st_size == 0))
++       /* error already occurred, or we have no state file to read from */
++       return rc;
++
+     f = fopen(stateFilename, "r");
+     if (!f) {
+ 	message(MESS_ERROR, "error opening state file %s: %s\n",
+@@ -2242,7 +2258,7 @@ int main(int argc, const char **argv)
+ 		return 1;
+ 
+ 	if (readState(stateFile))
+-		exit(1);
++		rc = 1;
+ 
+ 	message(MESS_DEBUG, "\nHandling %d logs\n", numLogs);
+ 
+Index: logrotate-3.8.7/test/test
+===================================================================
+--- logrotate-3.8.7.orig/test/test
++++ logrotate-3.8.7/test/test
+@@ -1138,8 +1138,7 @@ EOF
+ cleanup 46
+ 
+ # ------------------------------- Test 46 ------------------------------------
+-# the state file is truncated and obviously corrupt, so no rotation should
+-# happen
++# the state file is truncated and obviously corrupt
+ preptest test.log 46 1
+ 
+ cat > state << EOF
+@@ -1160,7 +1159,7 @@ fi
+ rm -f error.log
+ 
+ checkoutput <<EOF
+-test.log 0 zero
++test.log 0
+ EOF
+ 
+ 

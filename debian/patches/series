@@ -6,3 +6,6 @@ chown-484762.patch
 mktime-718332.patch
 man-su-explanation-729315.patch
 taboo-716649.patch
+ubuntu/createOutputFile-rename-already-existing-file.patch
+ubuntu/createOutputFile-eliminate-stat-open-TOCTOU-race.patch
+do-not-treat-failure-of-readState-as-fatal.patch
